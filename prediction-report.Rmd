@@ -1,0 +1,118 @@
+---
+title: "Practical Machine Learning - Prediction Project Report"
+author: "Sam Giles"
+date: "25/02/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, echo = FALSE}
+knitr::opts_chunk$set(comment = NA)
+```
+
+Introduction
+---
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These types of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how _much_ of a particular activity they do, but they rarely quantify how _well_ they do it. 
+
+The goal of this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict if they performed a Unilateral Dumbbell Biceps Curl correctly. They were asked to perform the lift in 5 different ways:
+
+- Class A: exactly according to the specification
+- Class B: throwing the elbows to the front
+- Class C: lifting the dumbbell only halfway
+- Class D: lowering the dumbbell only halfway
+- Class E: throwing the hips to the front
+
+Class A corresponds to the specified execution of the exercise, while Classes B to E correspond to common mistakes.
+
+More information is available from the website [here](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+Data Collection and Cleaning
+---
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+```{r load, message=FALSE}
+set.seed(1337)
+library(caret)
+library(randomForest)
+
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+train <- read.csv(url(train_url), na.strings = c("NA", ""))
+test <- read.csv(url(test_url), na.strings = c("NA", ""))
+```
+
+There are some columns that should have no effect on the model and can safely be removed. These are the row index, participant name, and timestamp information (first 5 columns). In addition, many of the columns in the dataset contain no values at all, or so few that they won't improve model accuracy, and can be removed. If a column contains more than 70% missing values it is removed. Finally, any columns with near zero variance are removed. These steps are applied to the `train` and `test` data, but in both cases using the `train` data to identify which columns to remove.
+
+```{r clean}
+train[, 1:5] <- NULL
+test[, 1:5] <- NULL
+
+na_cols <- colSums(is.na(train)) > nrow(train) * 0.7
+train <- train[!na_cols]
+test <- test[!na_cols]
+
+nsv <- nearZeroVar(train)
+train <- train[-nsv]
+test <- test[-nsv]
+```
+
+After these steps we are left with `r ncol(train)` columns in both the `test` and `train` data.
+
+Slicing for Cross Validation
+---
+
+The training data needs to be split into a training set and a validation set so that cross validation can be applied. Here the `train` set is split 70:30 into `tidy_train` and `validation`, with 70% of the data used for training and 30% used for cross validation.
+
+```{r slice}
+in_train <- createDataPartition(y = train$classe, p = 0.7, list = FALSE)
+tidy_train <- train[in_train, ]
+validation <- train[-in_train, ]
+```
+
+Fitting and Evaluating a Model
+---
+
+As this is a non-linear problem and the setup for cross validation has already been done a random forest model is chosen and applied to the `tidy_train` subset of the original `train` data.
+
+```{r model}
+model <- randomForest(classe ~ ., data = tidy_train)
+model
+```
+
+The OOB (out-of-bag) error estimate of `r round(model$err.rate[500, 1] * 100, 2)`% is low enough to proceed with prediction on the `validation` subset.
+
+Cross Validation
+---
+
+The model is now used to predict the class of activity from the `validation` subset and obtain an estimate of the out of sample error.
+
+```{r cross validation}
+validation_prediction <- predict(model, validation)
+conf_matrix <- confusionMatrix(validation_prediction, validation$classe)
+conf_table <- conf_matrix$table
+validation_accuracy <- (sum(diag(conf_table))/sum(conf_table)) * 100
+out_of_sample_error <- 100 - validation_accuracy
+out_of_sample_error
+```
+
+So our estimate of the out of sample error (if the model was used to predict the class of activity from a test dataset) is `r round(out_of_sample_error, 2)`%. Meaning the estimate of the accuracy of the model is `r round(validation_accuracy, 2)`%.
+
+Test Set Predictions
+---
+
+Finally, the model is used to predict the class of activity for each of the 20 observations in the `test` set.
+
+```{r test}
+test_set_prediction <- predict(model, test)
+test_set_prediction
+```
